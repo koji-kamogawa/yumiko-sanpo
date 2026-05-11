@@ -7,6 +7,7 @@ import json
 import re
 import base64
 from openai import OpenAI
+import hmac
 
 # DeepSeek API クライアント
 client = OpenAI(
@@ -25,6 +26,27 @@ if 'start_lat' not in st.session_state:
     st.session_state.start_lat = 35.6812
 if 'start_lon' not in st.session_state:
     st.session_state.start_lon = 139.7671
+
+# ---------------------------------------------------------
+# パスワードの確認
+# ---------------------------------------------------------
+def check_password():
+    PASSWD = os.environ.get('PASS_KEY')
+    if not PASSWD:
+        st.error("システムエラー: サーバー側にパスワードが設定されていません。")
+        return False
+        
+    password = st.text_input("パスワードを入力してください", type="password")
+    
+    if not password:
+        return False
+        
+    # タイミング攻撃を防ぐセキュアな比較
+    if hmac.compare_digest(password, PASSWD):
+        return True
+    else:
+        st.error("パスワードが間違っています。")
+        return False
 
 def geocode_address(address: str):
     """住所文字列から緯度経度を取得（エラーハンドリング強化版）"""
@@ -71,49 +93,52 @@ def geocode_address(address: str):
         st.error(f"ジオコーディングに失敗しました: {e}")
         return None, None
 
-st.title("ランダム散歩経路提案")
+# ---------- UI ----------
+if check_password():
+    
+    st.title("ランダム散歩経路提案")
 
-address = st.text_input("出発地点の住所", value="東京都千代田区丸の内1丁目")
+    address = st.text_input("出発地点の住所", value="東京都千代田区丸の内1丁目")
 
-time_min = st.slider("所用時間（分）", 10, 120, 30)
+    time_min = st.slider("所用時間（分）", 10, 120, 30)
 
-if st.button("経路を生成"):
-    lat, lon = geocode_address(address)
-    if lat is None:
-        st.stop()
-    st.session_state.start_lat = lat
-    st.session_state.start_lon = lon
+    if st.button("経路を生成"):
+        lat, lon = geocode_address(address)
+        if lat is None:
+            st.stop()
+        st.session_state.start_lat = lat
+        st.session_state.start_lon = lon
 
-    speed_m_per_min = 5000 / 60  # 約83.33 m/分
-    total_distance_m = speed_m_per_min * time_min
-    num_points = random.randint(3, 8)
-    segment_distances = [random.uniform(0.8, 1.2) * total_distance_m / num_points for _ in range(num_points)]
-    directions = [random.uniform(0, 360) for _ in range(num_points)]
-    lat_per_m = 1 / 111000
-    lon_per_m = 1 / (111000 * math.cos(math.radians(lat)))
-    points = [(lat, lon)]
-    current_lat, current_lon = lat, lon
-    for dist_m, deg in zip(segment_distances, directions):
-        rad = math.radians(deg)
-        dlat = dist_m * math.cos(rad) * lat_per_m
-        dlon = dist_m * math.sin(rad) * lon_per_m
-        current_lat += dlat
-        current_lon += dlon
-        points.append((current_lat, current_lon))
-    st.session_state.route = points
-    st.session_state.total_distance_m = total_distance_m
-    st.session_state.show = True
+        speed_m_per_min = 5000 / 60  # 約83.33 m/分
+        total_distance_m = speed_m_per_min * time_min
+        num_points = random.randint(3, 8)
+        segment_distances = [random.uniform(0.8, 1.2) * total_distance_m / num_points for _ in range(num_points)]
+        directions = [random.uniform(0, 360) for _ in range(num_points)]
+        lat_per_m = 1 / 111000
+        lon_per_m = 1 / (111000 * math.cos(math.radians(lat)))
+        points = [(lat, lon)]
+        current_lat, current_lon = lat, lon
+        for dist_m, deg in zip(segment_distances, directions):
+            rad = math.radians(deg)
+            dlat = dist_m * math.cos(rad) * lat_per_m
+            dlon = dist_m * math.sin(rad) * lon_per_m
+            current_lat += dlat
+            current_lon += dlon
+            points.append((current_lat, current_lon))
+        st.session_state.route = points
+        st.session_state.total_distance_m = total_distance_m
+        st.session_state.show = True
 
-if st.session_state.show:
-    route = st.session_state.route
-    if route:
-        m = folium.Map(location=[st.session_state.start_lat, st.session_state.start_lon], zoom_start=14)
-        folium.Marker(route[0], popup="出発点", icon=folium.Icon(color='green')).add_to(m)
-        folium.Marker(route[-1], popup="到着点", icon=folium.Icon(color='red')).add_to(m)
-        folium.PolyLine(route, color='blue', weight=5, opacity=0.7).add_to(m)
-        # HTMLをBase64エンコードしてdata URIとしてsrcに渡す
-        html = m._repr_html_()
-        encoded_html = base64.b64encode(html.encode()).decode()
-        st.iframe(src="data:text/html;base64," + encoded_html, height=500)
-        st.write(f"経由地点数: {len(route)}")
-        st.write(f"おおよその距離: {st.session_state.total_distance_m:.0f} m")
+    if st.session_state.show:
+        route = st.session_state.route
+        if route:
+            m = folium.Map(location=[st.session_state.start_lat, st.session_state.start_lon], zoom_start=14)
+            folium.Marker(route[0], popup="出発点", icon=folium.Icon(color='green')).add_to(m)
+            folium.Marker(route[-1], popup="到着点", icon=folium.Icon(color='red')).add_to(m)
+            folium.PolyLine(route, color='blue', weight=5, opacity=0.7).add_to(m)
+            # HTMLをBase64エンコードしてdata URIとしてsrcに渡す
+            html = m._repr_html_()
+            encoded_html = base64.b64encode(html.encode()).decode()
+            st.iframe(src="data:text/html;base64," + encoded_html, height=500)
+            st.write(f"経由地点数: {len(route)}")
+            st.write(f"おおよその距離: {st.session_state.total_distance_m:.0f} m")
